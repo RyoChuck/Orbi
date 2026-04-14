@@ -5,7 +5,11 @@ import UIKit
 final class TaskEditViewController: UIViewController {
 
     var onSave: ((Task) -> Void)?
-    var defaultDate: Date = Date()
+    var onDelete: (() -> Void)?
+    var defaultDate      : Date  = Date()
+    var defaultStartTime : Date? = nil
+    var defaultEndTime   : Date? = nil
+    private var isNewTask: Bool = true
 
     var task: Task
     private let accentColor = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
@@ -39,7 +43,8 @@ final class TaskEditViewController: UIViewController {
     private var colorButtons : [UIButton] = []
 
     init(task: Task? = nil) {
-        self.task = task ?? Task(title: "", date: Date())
+        self.task      = task ?? Task(title: "", date: Date())
+        self.isNewTask = (task == nil)
         super.init(nibName: nil, bundle: nil)
         if let t = task {
             timeEnabled          = t.startTime != nil
@@ -186,6 +191,19 @@ final class TaskEditViewController: UIViewController {
             memoField.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
         ])
         add(memoCard, top: 6)
+
+        // ── 削除ボタン（編集時のみ）
+        if !isNewTask {
+            let deleteBtn = UIButton(type: .system)
+            deleteBtn.setTitle("この予定を削除", for: .normal)
+            deleteBtn.setTitleColor(.white, for: .normal)
+            deleteBtn.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            deleteBtn.backgroundColor  = UIColor.systemRed.withAlphaComponent(0.85)
+            deleteBtn.layer.cornerRadius = 14
+            deleteBtn.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+            add(deleteBtn, top: 32)
+            deleteBtn.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        }
 
         prev?.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40).isActive = true
     }
@@ -511,6 +529,15 @@ final class TaskEditViewController: UIViewController {
 
         if let st = task.startTime { startPicker.date = st }
         if let et = task.endTime   { endPicker.date   = et }
+
+        // ドラッグで作成した場合の時間プリセット
+        if let st = defaultStartTime {
+            timeEnabled = true
+            startPicker.date = st
+            endPicker.date   = defaultEndTime ?? st.addingTimeInterval(3600)
+            timePickerViews.forEach { $0.isHidden = false }
+            timeCardCollapsedConstraint?.isActive = false
+        }
     }
 
     // MARK: - Keyboard
@@ -528,6 +555,20 @@ final class TaskEditViewController: UIViewController {
     // MARK: - Save / Cancel
 
     @objc private func cancel() { dismiss(animated: true) }
+
+    @objc private func deleteTapped() {
+        let alert = UIAlertController(title: "予定を削除しますか？",
+                                      message: task.title,
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "削除", style: .destructive) { [weak self] _ in
+            guard let self else { return }
+            TaskStore.shared.delete(self.task)
+            self.onDelete?()
+            self.dismiss(animated: true)
+        })
+        alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel))
+        present(alert, animated: true)
+    }
 
     @objc private func saveTapped() {
         guard let title = titleField.text, !title.isEmpty else {

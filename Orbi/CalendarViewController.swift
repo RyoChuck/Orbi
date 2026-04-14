@@ -40,6 +40,23 @@ final class CalendarViewController: UIViewController {
     private var tlResizeBlock : UIView?
     private var tlResizeOrigH : CGFloat = 0
 
+    // Timeline create（空きエリアドラッグで新規イベント）
+    private var tlCreating     = false
+    private var tlCreateGhost  : UIView?
+    private var tlCreateLabel  : UILabel?
+    private var tlCreateStartY : CGFloat = 0
+
+    // Week timeline
+    private var weekTLContainer  = UIView()
+    private var weekTLSV         : UIScrollView?
+    private var weekTLCV         : UIView?
+    private var weekTLTasks      : [[Task]] = []
+    private var weekTLCreating   = false
+    private var weekTLGhost      : UIView?
+    private var weekTLGhostLabel : UILabel?
+    private var weekTLStartY     : CGFloat = 0
+    private var weekTLDayIdx     : Int = 0
+
     private let store         = TaskStore.shared
     private let accent        = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
 
@@ -135,8 +152,11 @@ final class CalendarViewController: UIViewController {
         tlContainer.backgroundColor = .systemBackground
         tlContainer.isHidden = true
         weekCV.isHidden = true
+        weekTLContainer.translatesAutoresizingMaskIntoConstraints = false
+        weekTLContainer.backgroundColor = .systemBackground
+        weekTLContainer.isHidden = true
 
-        [headerView, wdHeader, calCV, weekCV, tlContainer].forEach { view.addSubview($0) }
+        [headerView, wdHeader, calCV, weekCV, weekTLContainer, tlContainer].forEach { view.addSubview($0) }
 
         NSLayoutConstraint.activate([
             headerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -163,10 +183,16 @@ final class CalendarViewController: UIViewController {
             calCV.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             calCV.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
 
-            weekCV.topAnchor.constraint(equalTo: wdHeader.bottomAnchor, constant: 4),
+            // 週：weekCVは固定高さのヘッダー、weekTLが下を埋める
+            weekCV.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: 4),
             weekCV.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             weekCV.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            weekCV.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            weekCV.heightAnchor.constraint(equalToConstant: 72),
+
+            weekTLContainer.topAnchor.constraint(equalTo: weekCV.bottomAnchor),
+            weekTLContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            weekTLContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            weekTLContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
 
             tlContainer.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             tlContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -197,12 +223,14 @@ final class CalendarViewController: UIViewController {
     @objc private func segChanged() {
         let idx = segment.selectedSegmentIndex
         UIView.animate(withDuration: 0.2) {
-            self.calCV.isHidden       = (idx != 0)
-            self.weekCV.isHidden      = (idx != 1)
-            self.wdHeader.isHidden    = (idx == 2)
-            self.tlContainer.isHidden = (idx != 2)
+            self.calCV.isHidden          = (idx != 0)
+            self.wdHeader.isHidden       = (idx != 0)   // 月のみ表示
+            self.weekCV.isHidden         = (idx != 1)
+            self.weekTLContainer.isHidden = (idx != 1)
+            self.tlContainer.isHidden    = (idx != 2)
         }
-        if idx == 2 { buildTimeline(for: selectedDate) }
+        if idx == 1 { reload(); buildWeekTimeline() }
+        else if idx == 2 { buildTimeline(for: selectedDate) }
         else { reload() }
     }
 
@@ -236,12 +264,15 @@ final class CalendarViewController: UIViewController {
     @objc private func addTask() { addTaskFor(selectedDate) }
     @objc private func storeChanged() {
         reload()
+        if segment.selectedSegmentIndex == 1 { buildWeekTimeline() }
         if segment.selectedSegmentIndex == 2, let d = tlDate { buildTimeline(for: d) }
     }
 
-    private func addTaskFor(_ date: Date) {
+    private func addTaskFor(_ date: Date, startTime: Date? = nil, endTime: Date? = nil) {
         let vc = TaskEditViewController()
-        vc.defaultDate = date
+        vc.defaultDate      = date
+        vc.defaultStartTime = startTime
+        vc.defaultEndTime   = endTime
         vc.onSave = { [weak self] task in
             TaskStore.shared.add(task)
             self?.reload()
@@ -257,10 +288,12 @@ final class CalendarViewController: UIViewController {
         let vc = TaskDetailViewController(task: task)
         vc.onUpdate = { [weak self] _ in
             self?.reload()
+            if self?.segment.selectedSegmentIndex == 1 { self?.buildWeekTimeline() }
             if self?.segment.selectedSegmentIndex == 2, let d = self?.tlDate { self?.buildTimeline(for: d) }
         }
         vc.onDelete = { [weak self] in
             self?.reload()
+            if self?.segment.selectedSegmentIndex == 1 { self?.buildWeekTimeline() }
             if self?.segment.selectedSegmentIndex == 2, let d = self?.tlDate { self?.buildTimeline(for: d) }
         }
         let nav = UINavigationController(rootViewController: vc)
@@ -485,86 +518,384 @@ final class CalendarViewController: UIViewController {
 
         switch g.state {
         case .began:
-            // タッチ位置のブロックを探す（リサイズハンドル以外）
-            guard let hit  = cv.hitTest(ptInCV, with: nil),
+            guard let hit = cv.hitTest(ptInCV, with: nil),
                   !(hit is TLResizeHandle) else { return }
 
-            // ブロック（直接の親がcvであるUIView）を特定
-            var target: UIView? = hit
-            while let t = target, t.superview !== cv { target = t.superview }
-            guard let block = target, !(block is TLResizeHandle),
-                  block.tag >= 0, block.tag < tlTimedTasks.count else { return }
+            // cv の直接の子ビューを特定
+            var candidate: UIView? = hit
+            while let c = candidate, c.superview !== cv { candidate = c.superview }
 
-            tlDragging = true
-            tlDragTask = tlTimedTasks[block.tag]
+            // 有効なイベントブロックか判定
+            let hitBlock: UIView? = {
+                guard let c = candidate, c.superview === cv,
+                      !(c is TLResizeHandle),
+                      c.tag >= 0, c.tag < tlTimedTasks.count
+                else { return nil }
+                return c
+            }()
 
-            let blockInView = cv.convert(block.frame, to: view)
-            let snap = UIView(frame: blockInView)
-            snap.backgroundColor    = tlTimedTasks[block.tag].color.uiColor.withAlphaComponent(0.85)
-            snap.layer.cornerRadius = 6
-            snap.alpha              = 0.85
-            snap.transform          = CGAffineTransform(scaleX: 1.03, y: 1.03)
-            snap.layer.shadowOpacity = 0.25; snap.layer.shadowRadius = 8
-            snap.layer.shadowOffset  = CGSize(width: 0, height: 4)
-            let tl = UILabel(frame: CGRect(x: 8, y: 8, width: snap.frame.width - 16, height: 16))
-            tl.text = tlTimedTasks[block.tag].title
-            tl.font = .systemFont(ofSize: 12, weight: .semibold); tl.textColor = .white
-            snap.addSubview(tl)
-            view.addSubview(snap)
-            tlDragFloat = snap
-            tlDragOffset = CGPoint(x: snap.center.x - ptInView.x, y: snap.center.y - ptInView.y)
-            block.alpha = 0.2
-            sv.isScrollEnabled = false
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            if let block = hitBlock {
+                // ── 移動モード ──────────────────────────
+                tlDragging = true
+                tlDragTask = tlTimedTasks[block.tag]
+
+                let blockInView = cv.convert(block.frame, to: view)
+                let snap = UIView(frame: blockInView)
+                snap.backgroundColor     = tlTimedTasks[block.tag].color.uiColor.withAlphaComponent(0.85)
+                snap.layer.cornerRadius  = 6
+                snap.alpha               = 0.85
+                snap.transform           = CGAffineTransform(scaleX: 1.03, y: 1.03)
+                snap.layer.shadowOpacity = 0.25; snap.layer.shadowRadius = 8
+                snap.layer.shadowOffset  = CGSize(width: 0, height: 4)
+                let tl = UILabel(frame: CGRect(x: 8, y: 8, width: snap.bounds.width - 16, height: 16))
+                tl.text = tlTimedTasks[block.tag].title
+                tl.font = .systemFont(ofSize: 12, weight: .semibold); tl.textColor = .white
+                snap.addSubview(tl)
+                view.addSubview(snap)
+                tlDragFloat  = snap
+                tlDragOffset = CGPoint(x: snap.center.x - ptInView.x, y: snap.center.y - ptInView.y)
+                block.alpha = 0.2
+                sv.isScrollEnabled = false
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+            } else {
+                // ── 新規作成モード ──────────────────────
+                tlCreating = true
+                sv.isScrollEnabled = false
+
+                let snappedY = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+                tlCreateStartY = snappedY
+
+                let gridW = cv.bounds.width - tlLblW - 12
+                let ghost = UIView(frame: CGRect(x: tlLblW + 2, y: snappedY + 10,
+                                                 width: gridW, height: tlHalfH))
+                ghost.backgroundColor    = accent.withAlphaComponent(0.15)
+                ghost.layer.cornerRadius = 6
+                ghost.layer.borderWidth  = 1.5
+                ghost.layer.borderColor  = accent.withAlphaComponent(0.5).cgColor
+                ghost.clipsToBounds      = true
+
+                let bar = UIView(frame: CGRect(x: 0, y: 0, width: 4, height: Int(tlHalfH)))
+                bar.backgroundColor    = accent
+                bar.layer.cornerRadius = 2
+                bar.autoresizingMask   = [.flexibleHeight]
+                ghost.addSubview(bar)
+
+                let lbl = UILabel(frame: CGRect(x: 8, y: 5, width: Int(gridW) - 14, height: 16))
+                lbl.font      = .systemFont(ofSize: 11, weight: .semibold)
+                lbl.textColor = accent
+                ghost.addSubview(lbl)
+                tlCreateLabel = lbl
+
+                cv.addSubview(ghost)
+                tlCreateGhost = ghost
+                updateCreateGhostLabel(startY: snappedY, endY: snappedY + tlHalfH)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
 
         case .changed:
-            guard tlDragging, let snap = tlDragFloat else { return }
-            snap.center = CGPoint(x: ptInView.x + tlDragOffset.x, y: ptInView.y + tlDragOffset.y)
-            showTLInsertLine(at: ptInView, sv: sv)
+            if tlCreating {
+                // ── 新規作成：ゴースト伸縮 ──────────────
+                guard let ghost = tlCreateGhost else { return }
+                let snappedY = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+                let endY     = max(tlCreateStartY + tlHalfH, snappedY)
+                let newH     = endY - tlCreateStartY
+                ghost.frame  = CGRect(x: ghost.frame.origin.x, y: tlCreateStartY + 10,
+                                      width: ghost.frame.width, height: newH)
+                updateCreateGhostLabel(startY: tlCreateStartY, endY: endY)
+
+                let ptInSV = g.location(in: sv)
+                if ptInSV.y > sv.frame.height - 70 {
+                    sv.contentOffset.y = min(sv.contentSize.height - sv.frame.height,
+                                             sv.contentOffset.y + 5)
+                }
+
+            } else if tlDragging {
+                // ── 移動：スナップ追従 ──────────────────
+                guard let snap = tlDragFloat else { return }
+                snap.center = CGPoint(x: ptInView.x + tlDragOffset.x, y: ptInView.y + tlDragOffset.y)
+
+                let ptInSV = g.location(in: sv)
+                if ptInSV.y < 70 { sv.contentOffset.y = max(0, sv.contentOffset.y - 5) }
+                else if ptInSV.y > sv.frame.height - 70 {
+                    sv.contentOffset.y = min(sv.contentSize.height - sv.frame.height,
+                                             sv.contentOffset.y + 5)
+                }
+            }
+
+        case .ended, .cancelled:
+            if tlCreating {
+                // ── 新規作成：TaskEditVCを開く ───────────
+                tlCreateGhost?.removeFromSuperview(); tlCreateGhost = nil; tlCreateLabel = nil
+                sv.isScrollEnabled = true
+                tlCreating = false
+
+                if g.state == .ended {
+                    let snappedY  = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+                    let endY      = max(tlCreateStartY + tlHalfH, snappedY)
+                    let date      = tlDate ?? selectedDate
+                    let startTime = snapToTime(y: tlCreateStartY, date: date)
+                    let endTime   = snapToTime(y: endY, date: date)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    addTaskFor(date, startTime: startTime, endTime: endTime)
+                }
+
+            } else {
+                // ── 移動：確定 ──────────────────────────
+                UIView.animate(withDuration: 0.15, animations: {
+                    self.tlDragFloat?.alpha = 0; self.tlDragFloat?.transform = .identity
+                }) { _ in self.tlDragFloat?.removeFromSuperview(); self.tlDragFloat = nil }
+
+                if g.state == .ended, var task = tlDragTask {
+                    let ptInSV   = g.location(in: sv)
+                    let localY   = ptInSV.y + sv.contentOffset.y - 10
+                    let newStart = snapToTime(y: localY, date: task.startTime ?? tlDate ?? Date())
+                    let dur = task.endTime.flatMap { et -> TimeInterval? in
+                        guard let st = task.startTime else { return nil }
+                        return et.timeIntervalSince(st)
+                    }
+                    let others = tlTimedTasks.filter { $0.id != task.id }
+                    let cal    = Calendar.current
+                    let conflict = others.contains { other in
+                        guard let os = other.startTime else { return false }
+                        return cal.component(.hour, from: os) == cal.component(.hour, from: newStart)
+                            && cal.component(.minute, from: os) == cal.component(.minute, from: newStart)
+                    }
+                    if !conflict {
+                        task.startTime = newStart
+                        task.endTime   = dur.map { newStart.addingTimeInterval($0) }
+                        TaskStore.shared.update(task)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    } else {
+                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    }
+                }
+                sv.isScrollEnabled = true
+                tlDragging = false; tlDragTask = nil
+                buildTimeline(for: tlDate ?? selectedDate)
+            }
+
+        default: break
+        }
+    }
+
+    private func updateCreateGhostLabel(startY: CGFloat, endY: CGFloat) {
+        let date      = tlDate ?? selectedDate
+        let startTime = snapToTime(y: startY, date: date)
+        let endTime   = snapToTime(y: endY,   date: date)
+        let tf = DateFormatter(); tf.dateFormat = "H:mm"
+        tlCreateLabel?.text = "\(tf.string(from: startTime)) 〜 \(tf.string(from: endTime))"
+    }
+
+    // MARK: - Week Timeline
+
+    private func buildWeekTimeline() {
+        tlDate = nil
+        weekTLContainer.subviews.forEach { $0.removeFromSuperview() }
+        weekTLCreating = false; weekTLGhost = nil; weekTLGhostLabel = nil
+
+        let sw   = view.bounds.width > 0 ? view.bounds.width : 390
+        let colW = (sw - tlLblW) / 7
+
+        let sv = UIScrollView(frame: weekTLContainer.bounds)
+        sv.autoresizingMask    = [.flexibleWidth, .flexibleHeight]
+        sv.contentSize         = CGSize(width: sw, height: tlGridH + 20)
+        sv.backgroundColor     = .systemBackground
+        sv.canCancelContentTouches = false
+        sv.delaysContentTouches    = false
+        weekTLContainer.addSubview(sv)
+        weekTLSV = sv
+
+        let cv = UIView(frame: CGRect(x: 0, y: 0, width: sw, height: tlGridH + 20))
+        cv.backgroundColor = .systemBackground
+        sv.addSubview(cv)
+        weekTLCV = cv
+
+        // グリッド線・時刻ラベル
+        for i in 0...(tlEndHour - tlStartHour) {
+            let y = CGFloat(i) * tlHourH + 10
+            let lbl = UILabel(frame: CGRect(x: 0, y: y - 8, width: tlLblW - 4, height: 16))
+            lbl.text = String(format: "%02d:00", tlStartHour + i)
+            lbl.font = .systemFont(ofSize: 9); lbl.textColor = .tertiaryLabel; lbl.textAlignment = .right
+            cv.addSubview(lbl)
+            let line = UIView(frame: CGRect(x: tlLblW, y: y, width: sw - tlLblW, height: 0.5))
+            line.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            cv.addSubview(line)
+            if i < tlEndHour - tlStartHour {
+                let half = UIView(frame: CGRect(x: tlLblW, y: y + tlHourH / 2, width: sw - tlLblW, height: 0.5))
+                half.backgroundColor = UIColor.separator.withAlphaComponent(0.08)
+                cv.addSubview(half)
+            }
+        }
+
+        // 縦区切り線（日ごと）
+        for col in 0...7 {
+            let x = tlLblW + CGFloat(col) * colW
+            let sep = UIView(frame: CGRect(x: x, y: 0, width: 0.5, height: tlGridH + 20))
+            sep.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            cv.addSubview(sep)
+        }
+
+        // イベントブロック
+        let cal = Calendar.current
+        weekTLTasks = weekDates.map { store.tasks(for: $0).filter { $0.startTime != nil } }
+
+        for (dayIdx, dayTasks) in weekTLTasks.enumerated() {
+            let colX = tlLblW + CGFloat(dayIdx) * colW + 2
+            for (taskIdx, task) in dayTasks.enumerated() {
+                guard let start = task.startTime else { continue }
+                let sh  = cal.component(.hour, from: start)
+                let sm  = cal.component(.minute, from: start)
+                let sy  = CGFloat(sh - tlStartHour) * tlHourH + CGFloat(sm) / 60.0 * tlHourH + 10
+                var blkH: CGFloat = tlHourH
+                if let end = task.endTime {
+                    let ey = CGFloat(cal.component(.hour, from: end) - tlStartHour) * tlHourH
+                           + CGFloat(cal.component(.minute, from: end)) / 60.0 * tlHourH + 10
+                    blkH = max(tlHalfH, ey - sy)
+                }
+
+                let block = WeekBlockView(frame: CGRect(x: colX, y: sy, width: colW - 4, height: blkH))
+                block.storedTask     = task
+                block.backgroundColor    = task.color.uiColor.withAlphaComponent(0.15)
+                block.layer.cornerRadius = 4
+                block.layer.borderWidth  = 1
+                block.layer.borderColor  = task.color.uiColor.withAlphaComponent(0.6).cgColor
+                block.clipsToBounds      = true
+
+                let bar = UIView(frame: CGRect(x: 0, y: 0, width: 3, height: Int(blkH)))
+                bar.backgroundColor = task.color.uiColor; block.addSubview(bar)
+
+                let titleL = UILabel(frame: CGRect(x: 5, y: 3, width: Int(colW) - 12, height: 12))
+                titleL.text      = task.title
+                titleL.font      = .systemFont(ofSize: 9, weight: .semibold)
+                titleL.textColor = task.color.uiColor.darker(by: 0.3)
+                block.addSubview(titleL)
+
+                let tf = DateFormatter(); tf.dateFormat = "H:mm"
+                let timeL = UILabel(frame: CGRect(x: 5, y: 16, width: Int(colW) - 12, height: 10))
+                timeL.text      = tf.string(from: start)
+                timeL.font      = .systemFont(ofSize: 8)
+                timeL.textColor = task.color.uiColor.darker(by: 0.15)
+                block.addSubview(timeL)
+
+                let tap = UITapGestureRecognizer(target: self, action: #selector(weekBlockTapped(_:)))
+                block.addGestureRecognizer(tap)
+                cv.addSubview(block)
+                _ = taskIdx // suppress warning
+            }
+        }
+
+        // 現在時刻ライン
+        if let todayIdx = weekDates.firstIndex(where: { $0.isSameDay(as: Date()) }) {
+            let h  = cal.component(.hour, from: Date())
+            let m  = cal.component(.minute, from: Date())
+            let y  = CGFloat(h - tlStartHour) * tlHourH + CGFloat(m) / 60.0 * tlHourH + 10
+            if y >= 10 && y <= tlGridH + 10 {
+                let colX = tlLblW + CGFloat(todayIdx) * colW
+                let dot  = UIView(frame: CGRect(x: colX - 4, y: y - 4, width: 8, height: 8))
+                dot.backgroundColor = .systemRed; dot.layer.cornerRadius = 4; cv.addSubview(dot)
+                let rl = UIView(frame: CGRect(x: colX + 4, y: y - 0.75, width: colW - 4, height: 1.5))
+                rl.backgroundColor = .systemRed; cv.addSubview(rl)
+            }
+        }
+
+        // ロングプレス（新規作成）
+        let lp = UILongPressGestureRecognizer(target: self, action: #selector(weekTLLP(_:)))
+        lp.minimumPressDuration = 0.25
+        lp.allowableMovement    = .greatestFiniteMagnitude
+        lp.delegate             = self
+        cv.addGestureRecognizer(lp)
+
+        // スクロール位置
+        let h = cal.component(.hour, from: Date())
+        let targetH = max(tlStartHour, min(tlEndHour - 1, h))
+        sv.setContentOffset(CGPoint(x: 0, y: max(0, CGFloat(targetH - tlStartHour - 1) * tlHourH)), animated: false)
+    }
+
+    @objc private func weekBlockTapped(_ g: UITapGestureRecognizer) {
+        guard let block = g.view as? WeekBlockView, let task = block.storedTask else { return }
+        openDetail(task)
+    }
+
+    @objc private func weekTLLP(_ g: UILongPressGestureRecognizer) {
+        guard let sv = weekTLSV, let cv = weekTLCV else { return }
+        let ptInCV = g.location(in: cv)
+        let sw     = cv.bounds.width
+        let colW   = (sw - tlLblW) / 7
+        guard ptInCV.x > tlLblW else { return }
+        let dayIdx = max(0, min(6, Int((ptInCV.x - tlLblW) / colW)))
+
+        switch g.state {
+        case .began:
+            weekTLCreating = true
+            sv.isScrollEnabled = false
+            let snappedY = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+            weekTLStartY = snappedY
+            weekTLDayIdx = dayIdx
+
+            let colX  = tlLblW + CGFloat(dayIdx) * colW
+            let ghost = UIView(frame: CGRect(x: colX + 2, y: snappedY + 10,
+                                             width: colW - 4, height: tlHalfH))
+            ghost.backgroundColor    = accent.withAlphaComponent(0.15)
+            ghost.layer.cornerRadius = 4
+            ghost.layer.borderWidth  = 1.5
+            ghost.layer.borderColor  = accent.withAlphaComponent(0.5).cgColor
+            ghost.clipsToBounds      = true
+
+            let bar = UIView(frame: CGRect(x: 0, y: 0, width: 3, height: Int(tlHalfH)))
+            bar.backgroundColor  = accent
+            bar.autoresizingMask = [.flexibleHeight]
+            ghost.addSubview(bar)
+
+            let lbl = UILabel(frame: CGRect(x: 5, y: 4, width: Int(colW) - 10, height: 14))
+            lbl.font      = .systemFont(ofSize: 9, weight: .semibold)
+            lbl.textColor = accent
+            ghost.addSubview(lbl)
+            weekTLGhostLabel = lbl
+
+            cv.addSubview(ghost)
+            weekTLGhost = ghost
+            updateWeekGhostLabel(startY: snappedY, endY: snappedY + tlHalfH)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+        case .changed:
+            guard weekTLCreating, let ghost = weekTLGhost else { return }
+            let snappedY = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+            let endY     = max(weekTLStartY + tlHalfH, snappedY)
+            ghost.frame  = CGRect(x: ghost.frame.origin.x, y: weekTLStartY + 10,
+                                  width: ghost.frame.width, height: endY - weekTLStartY)
+            updateWeekGhostLabel(startY: weekTLStartY, endY: endY)
 
             let ptInSV = g.location(in: sv)
-            if ptInSV.y < 70 { sv.contentOffset.y = max(0, sv.contentOffset.y - 5) }
-            else if ptInSV.y > sv.frame.height - 70 {
+            if ptInSV.y > sv.frame.height - 70 {
                 sv.contentOffset.y = min(sv.contentSize.height - sv.frame.height, sv.contentOffset.y + 5)
             }
 
         case .ended, .cancelled:
-            tlInsertLine?.removeFromSuperview(); tlInsertLine = nil
-            UIView.animate(withDuration: 0.15, animations: {
-                self.tlDragFloat?.alpha = 0; self.tlDragFloat?.transform = .identity
-            }) { _ in self.tlDragFloat?.removeFromSuperview(); self.tlDragFloat = nil }
-
-            if g.state == .ended, var task = tlDragTask {
-                let ptInSV  = g.location(in: sv)
-                let localY  = ptInSV.y + sv.contentOffset.y - 10
-                let newStart = snapToTime(y: localY, date: task.startTime ?? tlDate ?? Date())
-                let dur = task.endTime.flatMap { et -> TimeInterval? in
-                    guard let st = task.startTime else { return nil }
-                    return et.timeIntervalSince(st)
-                }
-                // 重複チェック
-                let others = tlTimedTasks.filter { $0.id != task.id }
-                let cal    = Calendar.current
-                let conflict = others.contains { other in
-                    guard let os = other.startTime else { return false }
-                    return cal.component(.hour, from: os) == cal.component(.hour, from: newStart)
-                        && cal.component(.minute, from: os) == cal.component(.minute, from: newStart)
-                }
-                if !conflict {
-                    task.startTime = newStart
-                    task.endTime   = dur.map { newStart.addingTimeInterval($0) }
-                    TaskStore.shared.update(task)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                } else {
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
-            }
+            weekTLGhost?.removeFromSuperview(); weekTLGhost = nil; weekTLGhostLabel = nil
             sv.isScrollEnabled = true
-            tlDragging = false; tlDragTask = nil
-            buildTimeline(for: tlDate ?? selectedDate)
+            weekTLCreating = false
+
+            if g.state == .ended {
+                let snappedY  = (ptInCV.y / tlHalfH).rounded() * tlHalfH
+                let endY      = max(weekTLStartY + tlHalfH, snappedY)
+                let date      = weekDates[weekTLDayIdx]
+                let startTime = snapToTime(y: weekTLStartY, date: date)
+                let endTime   = snapToTime(y: endY, date: date)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                addTaskFor(date, startTime: startTime, endTime: endTime)
+            }
 
         default: break
         }
+    }
+
+    private func updateWeekGhostLabel(startY: CGFloat, endY: CGFloat) {
+        let date      = weekDates[safe: weekTLDayIdx] ?? selectedDate
+        let startTime = snapToTime(y: startY, date: date)
+        let endTime   = snapToTime(y: endY,   date: date)
+        let tf = DateFormatter(); tf.dateFormat = "H:mm"
+        weekTLGhostLabel?.text = "\(tf.string(from: startTime))〜\(tf.string(from: endTime))"
     }
 
     private func showTLInsertLine(at ptInView: CGPoint, sv: UIScrollView) {
@@ -720,7 +1051,19 @@ extension CalendarViewController: UICollectionViewDataSource, UICollectionViewDe
     }
 }
 
-// MARK: - TLResizeHandle
+// MARK: - WeekBlockView
+
+final class WeekBlockView: UIView {
+    var storedTask: Task?
+}
+
+// MARK: - Array safe subscript
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
 
 final class TLResizeHandle: UIView {
     var taskIndex: Int = 0
