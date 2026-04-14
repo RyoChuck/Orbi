@@ -204,7 +204,7 @@ final class DayCell: UICollectionViewCell {
         let satBlue = UIColor(red: 0.20, green: 0.48, blue: 0.95, alpha: 1)
         let sunRed  = UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
 
-        contentView.backgroundColor = isSelected ? accent : .clear
+        contentView.backgroundColor = isSelected ? accent.withAlphaComponent(0.12) : .clear
         contentView.layer.cornerRadius = 4
 
         numberL.text = "\(day)"
@@ -223,7 +223,7 @@ final class DayCell: UICollectionViewCell {
         }
         numberL.font = .systemFont(ofSize: 13, weight: isToday || isSelected ? .bold : .medium)
 
-        circle.backgroundColor = (!isSelected && isToday) ? accent.withAlphaComponent(0.15) : .clear
+        circle.backgroundColor = isSelected ? accent : isToday ? accent.withAlphaComponent(0.15) : .clear
 
         chipStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         chipTasks = []
@@ -235,13 +235,13 @@ final class DayCell: UICollectionViewCell {
         let overflow = tasks.count - maxChips
 
         for (i, task) in shown.enumerated() {
-            let chip = makeChip(task: task, index: i, cellSelected: isSelected)
+            let chip = makeChip(task: task, index: i, cellSelected: false)
             chipStack.addArrangedSubview(chip)
             chipTasks.append(task)
         }
 
         if overflow > 0 {
-            let more = makeOverflowChip(count: overflow, cellSelected: isSelected)
+            let more = makeOverflowChip(count: overflow, cellSelected: false)
             chipStack.addArrangedSubview(more)
         }
     }

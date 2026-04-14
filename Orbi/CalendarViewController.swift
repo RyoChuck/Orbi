@@ -292,13 +292,13 @@ final class CalendarViewController: UIViewController {
             snap.addSubview(tl)
             view.addSubview(snap)
             chipDragFloat  = snap
-            chipDragOffset = CGPoint(x: ptInView.x - chipInView.midX, y: ptInView.y - chipInView.midY)
+            chipDragOffset = CGPoint(x: snap.center.x - ptInView.x, y: snap.center.y - ptInView.y)
             chip.alpha = 0.2
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         case .changed:
             guard let snap = chipDragFloat else { return }
-            snap.center = CGPoint(x: ptInView.x - chipDragOffset.x, y: ptInView.y - chipDragOffset.y)
+            snap.center = CGPoint(x: ptInView.x + chipDragOffset.x, y: ptInView.y + chipDragOffset.y)
             calCV.visibleCells.forEach { $0.contentView.backgroundColor = .clear }
             if let ip = calCV.indexPathForItem(at: ptInCalCV) {
                 calCV.cellForItem(at: ip)?.contentView.backgroundColor = accent.withAlphaComponent(0.12)
@@ -512,14 +512,14 @@ final class CalendarViewController: UIViewController {
             snap.addSubview(tl)
             view.addSubview(snap)
             tlDragFloat = snap
-            tlDragOffset = CGPoint(x: ptInView.x - blockInView.midX, y: ptInView.y - blockInView.midY)
+            tlDragOffset = CGPoint(x: snap.center.x - ptInView.x, y: snap.center.y - ptInView.y)
             block.alpha = 0.2
             sv.isScrollEnabled = false
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         case .changed:
             guard tlDragging, let snap = tlDragFloat else { return }
-            snap.center = CGPoint(x: ptInView.x - tlDragOffset.x, y: ptInView.y - tlDragOffset.y)
+            snap.center = CGPoint(x: ptInView.x + tlDragOffset.x, y: ptInView.y + tlDragOffset.y)
             showTLInsertLine(at: ptInView, sv: sv)
 
             let ptInSV = g.location(in: sv)
