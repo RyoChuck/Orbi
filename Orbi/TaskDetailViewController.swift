@@ -8,7 +8,7 @@ final class TaskDetailViewController: UIViewController {
     var onUpdate: ((Task) -> Void)?
     var onDelete: (() -> Void)?
 
-    private let accentColor = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
+    private let accentColor = UIColor(red: 0.28, green: 0.72, blue: 1.00, alpha: 1)
     private let scrollView  = UIScrollView()
     private let contentView = UIView()
     private let colorBar    = UIView()
@@ -32,8 +32,17 @@ final class TaskDetailViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = .clear
+        applyGradientBackground()
         title = "タスク詳細"
+
+        let navAppearance = UINavigationBarAppearance()
+        navAppearance.configureWithTransparentBackground()
+        navAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+        navigationController?.navigationBar.standardAppearance = navAppearance
+        navigationController?.navigationBar.scrollEdgeAppearance = navAppearance
+        navigationController?.navigationBar.tintColor = accentColor
 
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "pencil"),
@@ -78,8 +87,10 @@ final class TaskDetailViewController: UIViewController {
 
         // カラーバー付きヘッダーカード
         let headerCard = UIView()
-        headerCard.backgroundColor = .secondarySystemGroupedBackground
+        headerCard.backgroundColor   = UIColor.white.withAlphaComponent(0.10)
         headerCard.layer.cornerRadius = 14
+        headerCard.layer.borderWidth  = 0.5
+        headerCard.layer.borderColor  = UIColor.white.withAlphaComponent(0.20).cgColor
         headerCard.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(headerCard)
 
@@ -87,16 +98,16 @@ final class TaskDetailViewController: UIViewController {
         colorBar.translatesAutoresizingMaskIntoConstraints = false
 
         titleL.font          = .systemFont(ofSize: 20, weight: .semibold)
-        titleL.textColor     = .label
+        titleL.textColor     = .white
         titleL.numberOfLines = 0
         titleL.translatesAutoresizingMaskIntoConstraints = false
 
         timeL.font      = .systemFont(ofSize: 14)
-        timeL.textColor = .secondaryLabel
+        timeL.textColor = UIColor.white.withAlphaComponent(0.75)
         timeL.translatesAutoresizingMaskIntoConstraints = false
 
         dateL.font      = .systemFont(ofSize: 13)
-        dateL.textColor = .tertiaryLabel
+        dateL.textColor = UIColor.white.withAlphaComponent(0.55)
         dateL.translatesAutoresizingMaskIntoConstraints = false
 
         [colorBar, titleL, timeL, dateL].forEach { headerCard.addSubview($0) }
@@ -139,18 +150,21 @@ final class TaskDetailViewController: UIViewController {
 
         // メモカード
         let memoCard = UIView()
-        memoCard.backgroundColor  = .secondarySystemGroupedBackground
+        memoCard.backgroundColor   = UIColor.white.withAlphaComponent(0.10)
         memoCard.layer.cornerRadius = 14
+        memoCard.layer.borderWidth  = 0.5
+        memoCard.layer.borderColor  = UIColor.white.withAlphaComponent(0.20).cgColor
         memoCard.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(memoCard)
 
         memoTitle.text      = "メモ"
         memoTitle.font      = .systemFont(ofSize: 13, weight: .semibold)
-        memoTitle.textColor = .secondaryLabel
+        memoTitle.textColor = UIColor.white.withAlphaComponent(0.60)
         memoTitle.translatesAutoresizingMaskIntoConstraints = false
 
         memoView.font             = .systemFont(ofSize: 15)
         memoView.backgroundColor  = .clear
+        memoView.textColor        = .white
         memoView.isScrollEnabled  = false
         memoView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         memoView.translatesAutoresizingMaskIntoConstraints = false
@@ -206,10 +220,10 @@ final class TaskDetailViewController: UIViewController {
         memoView.text = task.memo.isEmpty ? "" : task.memo
         if task.memo.isEmpty {
             memoView.text = "ここにメモを入力..."
-            memoView.textColor = .placeholderText
+            memoView.textColor = UIColor.white.withAlphaComponent(0.35)
         } else {
             memoView.text  = task.memo
-            memoView.textColor = .label
+            memoView.textColor = .white
         }
 
         updateCompleteButton()
@@ -270,7 +284,7 @@ final class TaskDetailViewController: UIViewController {
     }
 
     private func saveMemo() {
-        let text = memoView.textColor == .placeholderText ? "" : (memoView.text ?? "")
+        let text = (memoView.textColor == UIColor.white.withAlphaComponent(0.35)) ? "" : (memoView.text ?? "")
         guard text != task.memo else { return }
         task.memo = text
         TaskStore.shared.update(task)
@@ -283,6 +297,17 @@ final class TaskDetailViewController: UIViewController {
         scrollView.contentInset.bottom = inset + 20
     }
 
+    private func applyGradientBackground() {
+        let g = CAGradientLayer()
+        g.colors = [
+            UIColor(red: 0.04, green: 0.09, blue: 0.26, alpha: 1).cgColor,
+            UIColor(red: 0.07, green: 0.22, blue: 0.52, alpha: 1).cgColor,
+        ]
+        g.startPoint = CGPoint(x: 0.2, y: 0); g.endPoint = CGPoint(x: 0.8, y: 1)
+        g.frame      = UIScreen.main.bounds
+        view.layer.insertSublayer(g, at: 0)
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
@@ -292,16 +317,16 @@ final class TaskDetailViewController: UIViewController {
 
 extension TaskDetailViewController: UITextViewDelegate {
     func textViewDidBeginEditing(_ textView: UITextView) {
-        if textView.textColor == .placeholderText {
+        if textView.textColor == UIColor.white.withAlphaComponent(0.35) {
             textView.text      = ""
-            textView.textColor = .label
+            textView.textColor = .white
         }
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
         if textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             textView.text      = "ここにメモを入力..."
-            textView.textColor = .placeholderText
+            textView.textColor = UIColor.white.withAlphaComponent(0.35)
         }
         saveMemo()
     }

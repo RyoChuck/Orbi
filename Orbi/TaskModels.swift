@@ -1,5 +1,25 @@
 import UIKit
 
+// MARK: - Repeat Rule
+
+enum RepeatRule: String, Codable, CaseIterable {
+    case none    = "none"
+    case daily   = "daily"
+    case weekly  = "weekly"
+    case monthly = "monthly"
+    case yearly  = "yearly"
+
+    var displayName: String {
+        switch self {
+        case .none:    return "繰り返しなし"
+        case .daily:   return "毎日"
+        case .weekly:  return "毎週"
+        case .monthly: return "毎月"
+        case .yearly:  return "毎年"
+        }
+    }
+}
+
 // MARK: - Task Color
 
 enum TaskColor: String, CaseIterable, Codable {
@@ -105,6 +125,11 @@ struct Task: Codable, Equatable {
     var linkedCustomerId   : String?        = nil
     var linkedCustomerName : String?        = nil
 
+    // 連日・繰り返し
+    var endDate            : Date?          = nil
+    var repeatRule         : RepeatRule     = .none
+    var repeatEndDate      : Date?          = nil
+
     init(title: String, date: Date, startTime: Date? = nil, endTime: Date? = nil,
          memo: String = "", color: TaskColor = .blue,
          eventType: EventType = .general, category: EventCategory = .other,
@@ -166,14 +191,36 @@ final class TaskStore {
     }
 
     func tasks(for date: Date) -> [Task] {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        let key = f.string(from: date)
-        return tasks.filter { $0.dayKey == key }
-            .sorted {
-                let a = $0.startTime ?? $0.date
-                let b = $1.startTime ?? $1.date
-                return a < b
+        let cal     = Calendar.current
+        let dayStart = date.startOfDay
+        return tasks.filter { task in
+            let taskStart = task.date.startOfDay
+            // 直接の日付一致
+            if taskStart == dayStart { return true }
+            // 連日スパン
+            if let ed = task.endDate, dayStart > taskStart && dayStart <= ed.startOfDay { return true }
+            // 繰り返し
+            if task.repeatRule != .none && dayStart > taskStart {
+                if let re = task.repeatEndDate, dayStart > re.startOfDay { return false }
+                switch task.repeatRule {
+                case .none:    return false
+                case .daily:   return true
+                case .weekly:
+                    return cal.component(.weekday, from: date) == cal.component(.weekday, from: task.date)
+                case .monthly:
+                    return cal.component(.day, from: date) == cal.component(.day, from: task.date)
+                case .yearly:
+                    return cal.component(.month, from: date) == cal.component(.month, from: task.date)
+                        && cal.component(.day, from: date) == cal.component(.day, from: task.date)
+                }
             }
+            return false
+        }
+        .sorted {
+            let a = $0.startTime ?? $0.date
+            let b = $1.startTime ?? $1.date
+            return a < b
+        }
     }
 
     func hasTask(on date: Date) -> [Task] { tasks(for: date) }
@@ -229,5 +276,64 @@ extension Date {
 
     var daysInMonth: Int {
         Calendar.current.range(of: .day, in: .month, for: self)!.count
+    }
+}
+
+// MARK: - Japanese Holiday Calendar
+
+struct JapaneseHolidayCalendar {
+
+    static func isHoliday(_ date: Date) -> Bool {
+        holidays(for: Calendar.current.component(.year, from: date)).contains(date.startOfDay)
+    }
+
+    static func holidays(for year: Int) -> Set<Date> {
+        var dates: Set<Date> = []
+        func d(_ m: Int, _ day: Int) -> Date? { date(year: year, month: m, day: day) }
+        func monday(_ m: Int, _ week: Int) -> Date? { nthWeekday(2, week: week, month: m, year: year) }
+
+        // 固定祝日
+        let fixed: [(Int,Int)] = [
+            (1,1),(2,11),(2,23),(4,29),(5,3),(5,4),(5,5),(8,11),(11,3),(11,23)
+        ]
+        for (m,day) in fixed { if let dt = d(m, day) { dates.insert(dt) } }
+
+        // ハッピーマンデー
+        if let dt = monday(1, 2)  { dates.insert(dt) }  // 成人の日
+        if let dt = monday(7, 3)  { dates.insert(dt) }  // 海の日
+        if let dt = monday(9, 3)  { dates.insert(dt) }  // 敬老の日
+        if let dt = monday(10, 2) { dates.insert(dt) }  // スポーツの日
+
+        // 春分の日・秋分の日（近似式）
+        let y = Double(year)
+        let shunbun = Int(20.8431 + 0.242194 * (y - 1980) - floor((y - 1980) / 4))
+        let shubun  = Int(23.2488 + 0.242194 * (y - 1980) - floor((y - 1980) / 4))
+        if let dt = d(3, shunbun) { dates.insert(dt) }
+        if let dt = d(9, shubun)  { dates.insert(dt) }
+
+        // 振替休日（日曜日の翌月曜日）
+        var substitutes: Set<Date> = []
+        let cal = Calendar.current
+        for dt in dates {
+            if cal.component(.weekday, from: dt) == 1 { // 日曜
+                if let mon = cal.date(byAdding: .day, value: 1, to: dt) {
+                    substitutes.insert(mon.startOfDay)
+                }
+            }
+        }
+        dates.formUnion(substitutes)
+
+        return dates
+    }
+
+    private static func date(year: Int, month: Int, day: Int) -> Date? {
+        var c = DateComponents(); c.year = year; c.month = month; c.day = day
+        return Calendar.current.date(from: c)?.startOfDay
+    }
+
+    private static func nthWeekday(_ weekday: Int, week: Int, month: Int, year: Int) -> Date? {
+        var c = DateComponents()
+        c.year = year; c.month = month; c.weekday = weekday; c.weekdayOrdinal = week
+        return Calendar.current.date(from: c)?.startOfDay
     }
 }

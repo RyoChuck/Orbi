@@ -199,27 +199,27 @@ final class DayCell: UICollectionViewCell {
     var onTaskDrag  : ((Task, UILongPressGestureRecognizer) -> Void)?
     private var chipTasks: [Task] = []
 
-    func configure(day: Int, isToday: Bool, isSelected: Bool, isCurrentMonth: Bool, tasks: [Task], dayOfWeek: Int = -1) {
-        let accent  = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
-        let satBlue = UIColor(red: 0.20, green: 0.48, blue: 0.95, alpha: 1)
-        let sunRed  = UIColor(red: 0.90, green: 0.28, blue: 0.28, alpha: 1)
+    func configure(day: Int, isToday: Bool, isSelected: Bool, isCurrentMonth: Bool, tasks: [Task], dayOfWeek: Int = -1, isHoliday: Bool = false) {
+        let accent  = UIColor(red: 0.28, green: 0.72, blue: 1.00, alpha: 1)
+        let satBlue = UIColor(red: 0.55, green: 0.80, blue: 1.00, alpha: 1)
+        let sunRed  = UIColor(red: 0.95, green: 0.45, blue: 0.45, alpha: 1)
 
-        contentView.backgroundColor = isSelected ? accent.withAlphaComponent(0.12) : .clear
+        contentView.backgroundColor = isSelected ? accent.withAlphaComponent(0.20) : .clear
         contentView.layer.cornerRadius = 4
 
         numberL.text = "\(day)"
         if isSelected {
             numberL.textColor = .white
         } else if !isCurrentMonth {
-            numberL.textColor = .quaternaryLabel
+            numberL.textColor = UIColor.white.withAlphaComponent(0.22)
         } else if isToday {
             numberL.textColor = accent
-        } else if dayOfWeek == 5 {   // 土
-            numberL.textColor = satBlue
-        } else if dayOfWeek == 6 {   // 日
+        } else if isHoliday || dayOfWeek == 6 {
             numberL.textColor = sunRed
+        } else if dayOfWeek == 5 {
+            numberL.textColor = satBlue
         } else {
-            numberL.textColor = .label
+            numberL.textColor = UIColor.white.withAlphaComponent(0.90)
         }
         numberL.font = .systemFont(ofSize: 13, weight: isToday || isSelected ? .bold : .medium)
 
@@ -420,21 +420,23 @@ final class WeekDayCell: UICollectionViewCell {
     func configure(date: Date, isSelected: Bool) {
         let days = ["月", "火", "水", "木", "金", "土", "日"]
         dayNameL.text = days[date.dayOfWeek]
+        dayNameL.textColor = UIColor.white.withAlphaComponent(0.55)
 
         let day = Calendar.current.component(.day, from: date)
         numberL.text = "\(day)"
 
         let isToday = date.isSameDay(as: Date())
-        let accent  = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
+        let accent  = UIColor(red: 0.28, green: 0.72, blue: 1.00, alpha: 1)
 
         circle.backgroundColor = isSelected ? accent : .clear
         numberL.textColor = isSelected ? .white
             : isToday ? accent
-            : .label
+            : UIColor.white.withAlphaComponent(0.90)
         numberL.font = .systemFont(ofSize: 16, weight: isToday ? .bold : .medium)
 
         let tasks = TaskStore.shared.tasks(for: date)
         dotView.isHidden = tasks.isEmpty
-        dotView.backgroundColor = isSelected ? .white.withAlphaComponent(0.8) : (tasks.first?.color.uiColor ?? accent)
+        dotView.backgroundColor = isSelected ? UIColor.white.withAlphaComponent(0.8)
+                                              : (tasks.first?.color.uiColor ?? accent)
     }
 }

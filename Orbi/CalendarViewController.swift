@@ -58,7 +58,7 @@ final class CalendarViewController: UIViewController {
     private var weekTLDayIdx     : Int = 0
 
     private let store         = TaskStore.shared
-    private let accent        = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
+    private let accent        = UIColor(red: 0.28, green: 0.72, blue: 1.00, alpha: 1)
 
     // MARK: - UI
     private let segment       = UISegmentedControl(items: ["月","週","日"])
@@ -74,7 +74,9 @@ final class CalendarViewController: UIViewController {
     // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemGroupedBackground
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = .clear
+        applyGradientBackground()
         title = "スケジュール"
         buildCollections()
         buildUI()
@@ -83,6 +85,17 @@ final class CalendarViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged),
                                                name: .taskStoreDidChange, object: nil)
     }
+    private func applyGradientBackground() {
+        let g = CAGradientLayer()
+        g.colors = [
+            UIColor(red: 0.04, green: 0.09, blue: 0.26, alpha: 1).cgColor,
+            UIColor(red: 0.07, green: 0.22, blue: 0.52, alpha: 1).cgColor,
+        ]
+        g.startPoint = CGPoint(x: 0.2, y: 0); g.endPoint = CGPoint(x: 0.8, y: 1)
+        g.frame      = UIScreen.main.bounds
+        view.layer.insertSublayer(g, at: 0)
+    }
+
     deinit { NotificationCenter.default.removeObserver(self) }
 
     // MARK: - Setup
@@ -118,7 +131,7 @@ final class CalendarViewController: UIViewController {
 
     private func buildUI() {
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerView.backgroundColor = .secondarySystemGroupedBackground
+        headerView.backgroundColor = UIColor.white.withAlphaComponent(0.08)
 
         prevBtn.setImage(UIImage(systemName: "chevron.left"), for: .normal)
         prevBtn.tintColor = accent; prevBtn.translatesAutoresizingMaskIntoConstraints = false
@@ -129,6 +142,7 @@ final class CalendarViewController: UIViewController {
         nextBtn.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
 
         monthLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        monthLabel.textColor = .white
         monthLabel.textAlignment = .center; monthLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let todayBtn = UIButton(type: .system)
@@ -143,17 +157,19 @@ final class CalendarViewController: UIViewController {
         wdHeader.translatesAutoresizingMaskIntoConstraints = false
         let wdNames = ["月","火","水","木","金","土","日"]
         for (i,d) in wdNames.enumerated() {
-            let l = UILabel(); l.text = d; l.textAlignment = .center; l.font = .systemFont(ofSize: 12)
-            l.textColor = i==5 ? accent : i==6 ? UIColor(red:0.9,green:0.28,blue:0.28,alpha:1) : .secondaryLabel
+            let l = UILabel(); l.text = d; l.textAlignment = .center; l.font = .systemFont(ofSize: 12, weight: .medium)
+            l.textColor = i==5 ? accent.withAlphaComponent(0.85)
+                        : i==6 ? UIColor(red:0.95,green:0.45,blue:0.45,alpha:1)
+                        : UIColor.white.withAlphaComponent(0.60)
             wdHeader.addArrangedSubview(l)
         }
 
         tlContainer.translatesAutoresizingMaskIntoConstraints = false
-        tlContainer.backgroundColor = .systemBackground
+        tlContainer.backgroundColor = .clear
         tlContainer.isHidden = true
         weekCV.isHidden = true
         weekTLContainer.translatesAutoresizingMaskIntoConstraints = false
-        weekTLContainer.backgroundColor = .systemBackground
+        weekTLContainer.backgroundColor = .clear
         weekTLContainer.isHidden = true
 
         [headerView, wdHeader, calCV, weekCV, weekTLContainer, tlContainer].forEach { view.addSubview($0) }
@@ -390,7 +406,7 @@ final class CalendarViewController: UIViewController {
         let sv = UIScrollView(frame: tlContainer.bounds)
         sv.autoresizingMask    = [.flexibleWidth, .flexibleHeight]
         sv.contentSize         = CGSize(width: sw, height: tlGridH + 20)
-        sv.backgroundColor     = .systemBackground
+        sv.backgroundColor     = .clear
         sv.showsVerticalScrollIndicator = true
         sv.canCancelContentTouches      = false
         sv.delaysContentTouches         = false
@@ -398,7 +414,7 @@ final class CalendarViewController: UIViewController {
         tlSV = sv
 
         let cv = UIView(frame: CGRect(x: 0, y: 0, width: sw, height: tlGridH + 20))
-        cv.backgroundColor = .systemBackground
+        cv.backgroundColor = .clear
         sv.addSubview(cv)
         tlCV = cv
 
@@ -407,16 +423,16 @@ final class CalendarViewController: UIViewController {
             let y = CGFloat(i) * tlHourH + 10
             let lbl = UILabel(frame: CGRect(x: 0, y: y - 8, width: tlLblW - 4, height: 16))
             lbl.text = String(format: "%02d:00", tlStartHour + i)
-            lbl.font = .systemFont(ofSize: 9); lbl.textColor = .tertiaryLabel; lbl.textAlignment = .right
+            lbl.font = .systemFont(ofSize: 9); lbl.textColor = UIColor.white.withAlphaComponent(0.40); lbl.textAlignment = .right
             cv.addSubview(lbl)
 
             let line = UIView(frame: CGRect(x: tlLblW, y: y, width: sw - tlLblW - 8, height: 0.5))
-            line.backgroundColor = UIColor.separator.withAlphaComponent(i == 0 || i == tlEndHour - tlStartHour ? 0.4 : 0.2)
+            line.backgroundColor = UIColor.white.withAlphaComponent(i == 0 || i == tlEndHour - tlStartHour ? 0.25 : 0.12)
             cv.addSubview(line)
 
             if i < tlEndHour - tlStartHour {
                 let half = UIView(frame: CGRect(x: tlLblW, y: y + tlHourH/2, width: sw - tlLblW - 8, height: 0.5))
-                half.backgroundColor = UIColor.separator.withAlphaComponent(0.1)
+                half.backgroundColor = UIColor.white.withAlphaComponent(0.06)
                 cv.addSubview(half)
             }
         }
@@ -700,14 +716,14 @@ final class CalendarViewController: UIViewController {
         let sv = UIScrollView(frame: weekTLContainer.bounds)
         sv.autoresizingMask    = [.flexibleWidth, .flexibleHeight]
         sv.contentSize         = CGSize(width: sw, height: tlGridH + 20)
-        sv.backgroundColor     = .systemBackground
+        sv.backgroundColor     = .clear
         sv.canCancelContentTouches = false
         sv.delaysContentTouches    = false
         weekTLContainer.addSubview(sv)
         weekTLSV = sv
 
         let cv = UIView(frame: CGRect(x: 0, y: 0, width: sw, height: tlGridH + 20))
-        cv.backgroundColor = .systemBackground
+        cv.backgroundColor = .clear
         sv.addSubview(cv)
         weekTLCV = cv
 
@@ -716,14 +732,14 @@ final class CalendarViewController: UIViewController {
             let y = CGFloat(i) * tlHourH + 10
             let lbl = UILabel(frame: CGRect(x: 0, y: y - 8, width: tlLblW - 4, height: 16))
             lbl.text = String(format: "%02d:00", tlStartHour + i)
-            lbl.font = .systemFont(ofSize: 9); lbl.textColor = .tertiaryLabel; lbl.textAlignment = .right
+            lbl.font = .systemFont(ofSize: 9); lbl.textColor = UIColor.white.withAlphaComponent(0.40); lbl.textAlignment = .right
             cv.addSubview(lbl)
             let line = UIView(frame: CGRect(x: tlLblW, y: y, width: sw - tlLblW, height: 0.5))
-            line.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            line.backgroundColor = UIColor.white.withAlphaComponent(0.15)
             cv.addSubview(line)
             if i < tlEndHour - tlStartHour {
                 let half = UIView(frame: CGRect(x: tlLblW, y: y + tlHourH / 2, width: sw - tlLblW, height: 0.5))
-                half.backgroundColor = UIColor.separator.withAlphaComponent(0.08)
+                half.backgroundColor = UIColor.white.withAlphaComponent(0.05)
                 cv.addSubview(half)
             }
         }
@@ -732,7 +748,7 @@ final class CalendarViewController: UIViewController {
         for col in 0...7 {
             let x = tlLblW + CGFloat(col) * colW
             let sep = UIView(frame: CGRect(x: x, y: 0, width: 0.5, height: tlGridH + 20))
-            sep.backgroundColor = UIColor.separator.withAlphaComponent(0.2)
+            sep.backgroundColor = UIColor.white.withAlphaComponent(0.12)
             cv.addSubview(sep)
         }
 
@@ -1013,7 +1029,8 @@ extension CalendarViewController: UICollectionViewDataSource, UICollectionViewDe
                            isSelected: item.date.isSameDay(as: selectedDate),
                            isCurrentMonth: item.isCurrentMonth,
                            tasks: store.hasTask(on: item.date),
-                           dayOfWeek: item.date.dayOfWeek)
+                           dayOfWeek: item.date.dayOfWeek,
+                           isHoliday: JapaneseHolidayCalendar.isHoliday(item.date))
             cell.onTaskTapped = { [weak self] task in self?.openDetail(task) }
             cell.onTaskDrag   = { [weak self] task, gesture in
                 self?.handleChipDrag(task: task, gesture: gesture)

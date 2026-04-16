@@ -12,7 +12,7 @@ final class TaskEditViewController: UIViewController {
     private var isNewTask: Bool = true
 
     var task: Task
-    private let accentColor = UIColor(red: 0.26, green: 0.54, blue: 0.96, alpha: 1)
+    private let accentColor = UIColor(red: 0.28, green: 0.72, blue: 1.00, alpha: 1)
 
     // UI
     private let scrollView   = UIScrollView()
@@ -38,6 +38,17 @@ final class TaskEditViewController: UIViewController {
     private var timePickerViews: [UIView] = []
     private var timeCardCollapsedConstraint: NSLayoutConstraint?
 
+    // 連日・繰り返し
+    private let endDatePicker      = UIDatePicker()
+    private var endDateEnabled     = false
+    private var endDateViews       : [UIView] = []
+    private var endDateCollapsed   : NSLayoutConstraint?
+    private var selectedRepeat     : RepeatRule = .none
+    private let repeatEndPicker    = UIDatePicker()
+    private var repeatEndEnabled   = false
+    private var repeatEndViews     : [UIView] = []
+    private var repeatButtons      : [UIButton] = []
+
     // カラー
     private var selectedColor: TaskColor = .blue
     private var colorButtons : [UIButton] = []
@@ -47,19 +58,30 @@ final class TaskEditViewController: UIViewController {
         self.isNewTask = (task == nil)
         super.init(nibName: nil, bundle: nil)
         if let t = task {
-            timeEnabled          = t.startTime != nil
-            selectedColor        = t.color
-            selectedCategory     = t.category
-            linkedCustomerId     = t.linkedCustomerId
-            linkedCustomerName   = t.linkedCustomerName
+            timeEnabled      = t.startTime != nil
+            selectedColor    = t.color
+            selectedCategory = t.category
+            linkedCustomerId   = t.linkedCustomerId
+            linkedCustomerName = t.linkedCustomerName
+            selectedRepeat   = t.repeatRule
+            endDateEnabled   = t.endDate != nil
         }
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = .clear
+        applyGradientBackground()
         title = task.title.isEmpty ? "予定を追加" : "予定を編集"
-        view.backgroundColor = .systemGroupedBackground
+
+        let navAppearance = UINavigationBarAppearance()
+        navAppearance.configureWithTransparentBackground()
+        navAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+        navigationController?.navigationBar.standardAppearance = navAppearance
+        navigationController?.navigationBar.scrollEdgeAppearance = navAppearance
+        navigationController?.navigationBar.tintColor = accentColor
 
         navigationItem.leftBarButtonItem  = UIBarButtonItem(
             title: "キャンセル", style: .plain, target: self, action: #selector(cancel))
@@ -73,6 +95,17 @@ final class TaskEditViewController: UIViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(keyboardChanged(_:)),
             name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    private func applyGradientBackground() {
+        let g = CAGradientLayer()
+        g.colors = [
+            UIColor(red: 0.04, green: 0.09, blue: 0.26, alpha: 1).cgColor,
+            UIColor(red: 0.07, green: 0.22, blue: 0.52, alpha: 1).cgColor,
+        ]
+        g.startPoint = CGPoint(x: 0.2, y: 0); g.endPoint = CGPoint(x: 0.8, y: 1)
+        g.frame      = UIScreen.main.bounds
+        view.layer.insertSublayer(g, at: 0)
     }
 
     deinit {
@@ -115,8 +148,13 @@ final class TaskEditViewController: UIViewController {
         let titleCard = makeCard()
         titleField.placeholder = "予定のタイトル（必須）"
         titleField.font = .systemFont(ofSize: 16)
+        titleField.textColor = .white
         titleField.clearButtonMode = .whileEditing
         titleField.backgroundColor = .clear
+        titleField.attributedPlaceholder = NSAttributedString(
+            string: "予定のタイトル（必須）",
+            attributes: [.foregroundColor: UIColor.white.withAlphaComponent(0.40)]
+        )
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleCard.addSubview(titleField)
         NSLayoutConstraint.activate([
@@ -150,6 +188,7 @@ final class TaskEditViewController: UIViewController {
         add(sectionLabel("日付"), top: 20)
         let dateCard = makeCard()
         let dateLbl = UILabel(); dateLbl.text = "日付"; dateLbl.font = .systemFont(ofSize: 16)
+        dateLbl.textColor = .white
         dateLbl.translatesAutoresizingMaskIntoConstraints = false
         datePicker.datePickerMode = .date
         datePicker.preferredDatePickerStyle = .compact
@@ -166,6 +205,16 @@ final class TaskEditViewController: UIViewController {
         ])
         add(dateCard, top: 6)
 
+        // ── 終了日（連日）
+        add(sectionLabel("終了日"), top: 20)
+        let endDateCard = buildEndDateCard()
+        add(endDateCard, top: 6)
+
+        // ── 繰り返し
+        add(sectionLabel("繰り返し"), top: 20)
+        let repeatCard = buildRepeatCard()
+        add(repeatCard, top: 6)
+
         // ── 時間
         add(sectionLabel("時間"), top: 20)
         let timeCard = buildTimeCard()
@@ -179,7 +228,9 @@ final class TaskEditViewController: UIViewController {
         // ── メモ
         add(sectionLabel("メモ"), top: 20)
         let memoCard = makeCard()
-        memoField.font = .systemFont(ofSize: 15); memoField.backgroundColor = .clear
+        memoField.font = .systemFont(ofSize: 15)
+        memoField.backgroundColor = .clear
+        memoField.textColor = .white
         memoField.isScrollEnabled = false
         memoField.translatesAutoresizingMaskIntoConstraints = false
         memoCard.addSubview(memoField)
@@ -206,6 +257,123 @@ final class TaskEditViewController: UIViewController {
         }
 
         prev?.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40).isActive = true
+    }
+
+    // MARK: - End Date Card
+
+    private func buildEndDateCard() -> UIView {
+        let card = makeCard()
+
+        let sw = UISwitch()
+        sw.isOn = endDateEnabled; sw.onTintColor = accentColor
+        sw.translatesAutoresizingMaskIntoConstraints = false
+        sw.addTarget(self, action: #selector(endDateToggle(_:)), for: .valueChanged)
+
+        let swLbl = UILabel(); swLbl.text = "終了日を設定"; swLbl.font = .systemFont(ofSize: 16)
+        swLbl.textColor = .white
+        swLbl.translatesAutoresizingMaskIntoConstraints = false
+
+        endDatePicker.datePickerMode = .date
+        endDatePicker.preferredDatePickerStyle = .compact
+        endDatePicker.locale = Locale(identifier: "ja_JP")
+        endDatePicker.tintColor = accentColor
+        endDatePicker.isHidden = !endDateEnabled
+        endDatePicker.translatesAutoresizingMaskIntoConstraints = false
+
+        let sep = UIView(); sep.backgroundColor = UIColor.separator.withAlphaComponent(0.3)
+        sep.translatesAutoresizingMaskIntoConstraints = false
+        sep.isHidden = !endDateEnabled
+
+        let endLbl = UILabel(); endLbl.text = "終了日"; endLbl.font = .systemFont(ofSize: 15)
+        endLbl.textColor = UIColor.white.withAlphaComponent(0.80)
+        endLbl.translatesAutoresizingMaskIntoConstraints = false
+        endLbl.isHidden = !endDateEnabled
+
+        endDateViews = [sep, endLbl, endDatePicker]
+        [swLbl, sw, sep, endLbl, endDatePicker].forEach { card.addSubview($0) }
+
+        let collapsed = swLbl.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12)
+        collapsed.isActive = !endDateEnabled
+        endDateCollapsed = collapsed
+
+        NSLayoutConstraint.activate([
+            swLbl.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            swLbl.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+            sw.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            sw.centerYAnchor.constraint(equalTo: swLbl.centerYAnchor),
+            sep.topAnchor.constraint(equalTo: swLbl.bottomAnchor, constant: 10),
+            sep.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            sep.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            sep.heightAnchor.constraint(equalToConstant: 0.5),
+            endLbl.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            endLbl.topAnchor.constraint(equalTo: sep.bottomAnchor, constant: 10),
+            endLbl.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+            endDatePicker.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            endDatePicker.centerYAnchor.constraint(equalTo: endLbl.centerYAnchor),
+        ])
+        return card
+    }
+
+    @objc private func endDateToggle(_ sw: UISwitch) {
+        endDateEnabled = sw.isOn
+        endDateCollapsed?.isActive = !endDateEnabled
+        UIView.animate(withDuration: 0.25) {
+            self.endDateViews.forEach { $0.isHidden = !self.endDateEnabled }
+            self.scrollView.layoutIfNeeded()
+        }
+    }
+
+    // MARK: - Repeat Card
+
+    private func buildRepeatCard() -> UIView {
+        let card = makeCard()
+        let rules: [RepeatRule] = [.none, .daily, .weekly, .monthly, .yearly]
+        let stack = UIStackView()
+        stack.axis = .horizontal; stack.distribution = .fillEqually; stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+
+        for rule in rules {
+            let btn = UIButton(type: .system)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.layer.cornerRadius = 8
+            btn.layer.borderWidth  = 0.5
+            btn.layer.borderColor  = UIColor.separator.cgColor
+            btn.titleLabel?.font   = .systemFont(ofSize: 11, weight: .medium)
+            btn.setTitle(rule.displayName, for: .normal)
+            btn.tag = rules.firstIndex(of: rule) ?? 0
+            btn.addTarget(self, action: #selector(repeatTapped(_:)), for: .touchUpInside)
+            repeatButtons.append(btn)
+            stack.addArrangedSubview(btn)
+        }
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            stack.heightAnchor.constraint(equalToConstant: 36),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+        ])
+        refreshRepeatButtons()
+        return card
+    }
+
+    private func refreshRepeatButtons() {
+        let rules: [RepeatRule] = [.none, .daily, .weekly, .monthly, .yearly]
+        for btn in repeatButtons {
+            let rule = rules[btn.tag]
+            let sel  = rule == selectedRepeat
+            btn.backgroundColor = sel ? accentColor : .secondarySystemGroupedBackground
+            btn.setTitleColor(sel ? .white : accentColor, for: .normal)
+            btn.layer.borderWidth = sel ? 0 : 0.5
+        }
+    }
+
+    @objc private func repeatTapped(_ sender: UIButton) {
+        let rules: [RepeatRule] = [.none, .daily, .weekly, .monthly, .yearly]
+        selectedRepeat = rules[sender.tag]
+        refreshRepeatButtons()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     // MARK: - Category Grid
@@ -284,13 +452,13 @@ final class TaskEditViewController: UIViewController {
         for btn in categoryButtons {
             let cat = EventCategory.allCases[btn.tag]
             let selected = cat == selectedCategory
-            btn.backgroundColor = selected ? accentColor : UIColor.secondarySystemGroupedBackground
+            btn.backgroundColor = selected ? accentColor : UIColor.white.withAlphaComponent(0.10)
             btn.tintColor       = selected ? .white : accentColor
             var config = btn.configuration
             config?.baseForegroundColor = selected ? .white : accentColor
             btn.configuration = config
             btn.layer.borderWidth = selected ? 0 : 0.5
-            btn.layer.borderColor = UIColor.separator.cgColor
+            btn.layer.borderColor = UIColor.white.withAlphaComponent(0.20).cgColor
         }
     }
 
@@ -323,14 +491,14 @@ final class TaskEditViewController: UIViewController {
 
         customerBtn.translatesAutoresizingMaskIntoConstraints = false
         customerBtn.setTitle(linkedCustomerName ?? "顧客を選択（任意）", for: .normal)
-        customerBtn.setTitleColor(linkedCustomerName != nil ? .label : .placeholderText, for: .normal)
+        customerBtn.setTitleColor(linkedCustomerName != nil ? .white : UIColor.white.withAlphaComponent(0.40), for: .normal)
         customerBtn.titleLabel?.font = .systemFont(ofSize: 15)
         customerBtn.contentHorizontalAlignment = .left
         customerBtn.addTarget(self, action: #selector(selectCustomer), for: .touchUpInside)
         customerBtn.isHidden = typeSegment.selectedSegmentIndex != 0
 
         let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
-        chevron.tintColor = .tertiaryLabel
+        chevron.tintColor = UIColor.white.withAlphaComponent(0.40)
         chevron.translatesAutoresizingMaskIntoConstraints = false
 
         [iconIV, customerBtn, chevron].forEach { card.addSubview($0) }
@@ -363,15 +531,15 @@ final class TaskEditViewController: UIViewController {
             self?.linkedCustomerId   = nil
             self?.linkedCustomerName = nil
             self?.customerBtn.setTitle("顧客を選択（任意）", for: .normal)
-            self?.customerBtn.setTitleColor(.placeholderText, for: .normal)
+            self?.customerBtn.setTitleColor(UIColor.white.withAlphaComponent(0.40), for: .normal)
         })
         alert.addAction(UIAlertAction(title: "設定", style: .default) { [weak self] _ in
             let name = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespaces)
             if let name, !name.isEmpty {
                 self?.linkedCustomerName = name
-                self?.linkedCustomerId   = UUID().uuidString  // 仮ID（将来NeXuSと統合）
+                self?.linkedCustomerId   = UUID().uuidString
                 self?.customerBtn.setTitle(name, for: .normal)
-                self?.customerBtn.setTitleColor(.label, for: .normal)
+                self?.customerBtn.setTitleColor(.white, for: .normal)
             }
         })
         alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel))
@@ -389,6 +557,7 @@ final class TaskEditViewController: UIViewController {
         sw.addTarget(self, action: #selector(timeToggle(_:)), for: .valueChanged)
 
         let swLbl = UILabel(); swLbl.text = "時間を設定"; swLbl.font = .systemFont(ofSize: 16)
+        swLbl.textColor = .white
         swLbl.translatesAutoresizingMaskIntoConstraints = false
 
         startPicker.datePickerMode = .time
@@ -408,10 +577,12 @@ final class TaskEditViewController: UIViewController {
         endPicker.translatesAutoresizingMaskIntoConstraints = false
 
         let startLbl = UILabel(); startLbl.text = "開始"; startLbl.font = .systemFont(ofSize: 15)
+        startLbl.textColor = UIColor.white.withAlphaComponent(0.80)
         startLbl.translatesAutoresizingMaskIntoConstraints = false
         startLbl.isHidden = !timeEnabled
 
         let endLbl = UILabel(); endLbl.text = "終了"; endLbl.font = .systemFont(ofSize: 15)
+        endLbl.textColor = UIColor.white.withAlphaComponent(0.80)
         endLbl.translatesAutoresizingMaskIntoConstraints = false
         endLbl.isHidden = !timeEnabled
 
@@ -530,6 +701,17 @@ final class TaskEditViewController: UIViewController {
         if let st = task.startTime { startPicker.date = st }
         if let et = task.endTime   { endPicker.date   = et }
 
+        // 連日
+        if let ed = task.endDate {
+            endDatePicker.date = ed
+        } else {
+            endDatePicker.date = datePicker.date.adding(days: 1)
+        }
+
+        // 繰り返し
+        selectedRepeat = task.repeatRule
+        refreshRepeatButtons()
+
         // ドラッグで作成した場合の時間プリセット
         if let st = defaultStartTime {
             timeEnabled = true
@@ -584,6 +766,8 @@ final class TaskEditViewController: UIViewController {
         task.linkedCustomerName  = typeSegment.selectedSegmentIndex == 0 ? linkedCustomerName : nil
         task.startTime           = timeEnabled ? startPicker.date : nil
         task.endTime             = timeEnabled ? endPicker.date : nil
+        task.endDate             = endDateEnabled ? endDatePicker.date : nil
+        task.repeatRule          = selectedRepeat
 
         onSave?(task)
         dismiss(animated: true)
@@ -599,15 +783,18 @@ final class TaskEditViewController: UIViewController {
 
     private func makeCard() -> UIView {
         let v = UIView()
-        v.backgroundColor    = .secondarySystemGroupedBackground
+        v.backgroundColor    = UIColor.white.withAlphaComponent(0.10)
         v.layer.cornerRadius = 14
+        v.layer.borderWidth  = 0.5
+        v.layer.borderColor  = UIColor.white.withAlphaComponent(0.20).cgColor
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }
 
     private func sectionLabel(_ text: String) -> UILabel {
         let l = UILabel(); l.text = text.uppercased()
-        l.font = .systemFont(ofSize: 12, weight: .semibold); l.textColor = .secondaryLabel
+        l.font = .systemFont(ofSize: 12, weight: .semibold)
+        l.textColor = UIColor.white.withAlphaComponent(0.55)
         l.translatesAutoresizingMaskIntoConstraints = false; return l
     }
 }
